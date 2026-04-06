@@ -2,6 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const path = require("path");
 const Order = require("./models/Order");
 
 dotenv.config();
@@ -117,6 +118,13 @@ app.get("/api/test-write", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/* serve frontend */
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get(/.*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 const port = process.env.PORT || 5000;

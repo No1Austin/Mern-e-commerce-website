@@ -1,1 +1,6 @@
 .env
+
+
+rm -rf backend/public
+mkdir -p backend/public
+cp -r frontend/dist/* backend/public/
