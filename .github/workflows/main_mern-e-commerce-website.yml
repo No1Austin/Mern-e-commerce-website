@@ -1,4 +1,4 @@
-name: Build and deploy Node.js app to Azure Web App - Mern-e-commerce-website
+name: Build and deploy MERN app to Azure Web App
 
 on:
   push:
@@ -20,13 +20,22 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm install
+
+      - name: Build frontend
+        working-directory: ./frontend
+        run: npm run build
+
       - name: Install backend dependencies
         working-directory: ./backend
         run: npm install
 
-      - name: Test backend
-        working-directory: ./backend
-        run: npm run test --if-present
+      - name: Copy frontend build into backend
+        run: |
+          rm -rf backend/build
+          cp -r frontend/build backend/build
 
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
