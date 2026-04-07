@@ -2,33 +2,50 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const path = require("path");
 const Order = require("./models/order");
 
 dotenv.config();
 
 const app = express();
 
+/**
+ * Allow requests from your frontend.
+ * Put your Vercel URL in CLIENT_URL in Azure environment variables.
+ * Example:
+ * CLIENT_URL=https://your-app.vercel.app
+ */
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "*"
+    origin: process.env.CLIENT_URL || "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type"]
   })
 );
 
 app.use(express.json());
 
+/* MongoDB */
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("MongoDB connection error:", err.message));
 
+/* Health check */
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, message: "Backend is running" });
+  res.status(200).json({ ok: true, message: "Backend is running" });
 });
 
+/* External products API */
 app.get("/api/products", async (req, res) => {
   try {
     const response = await fetch("https://api.escuelajs.co/api/v1/products");
+
+    if (!response.ok) {
+      return res.status(502).json({
+        message: "Failed to fetch external product catalog"
+      });
+    }
+
     const data = await response.json();
 
     const cleaned = data.slice(0, 12).map((item) => ({
@@ -36,16 +53,18 @@ app.get("/api/products", async (req, res) => {
       title: item.title,
       price: item.price,
       description: item.description,
-      image: Array.isArray(item.images) ? item.images[0] : "",
+      image: Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : "",
       category: item.category?.name || "General"
     }));
 
     res.json(cleaned);
   } catch (error) {
+    console.error("Products fetch error:", error.message);
     res.status(500).json({ message: "Failed to fetch products" });
   }
 });
 
+/* Create order */
 app.post("/api/orders", async (req, res) => {
   try {
     const { customerName, email, address, items, total } = req.body;
@@ -83,19 +102,23 @@ app.post("/api/orders", async (req, res) => {
       orderId: order._id
     });
   } catch (error) {
+    console.error("Order save error:", error.message);
     res.status(500).json({ message: "Failed to save order" });
   }
 });
 
+/* Get orders */
 app.get("/api/orders", async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
+    console.error("Orders fetch error:", error.message);
     res.status(500).json({ message: "Failed to fetch orders" });
   }
 });
 
+/* Optional DB write test */
 app.get("/api/test-write", async (req, res) => {
   try {
     const testOrder = await Order.create({
@@ -116,15 +139,14 @@ app.get("/api/test-write", async (req, res) => {
 
     res.json({ message: "Test order saved", testOrder });
   } catch (err) {
+    console.error("Test write error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-/* serve frontend */
-app.use(express.static(path.join(__dirname, "public")));
-
-app.get(/.*/, (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+/* API 404 */
+app.use("/api", (req, res) => {
+  res.status(404).json({ message: "API route not found" });
 });
 
 const port = process.env.PORT || 5000;
