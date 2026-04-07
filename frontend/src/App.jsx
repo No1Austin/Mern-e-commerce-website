@@ -1,68 +1,90 @@
 import { useEffect, useMemo, useState } from "react";
 import "./index.css";
 
-const API_URL = import.meta.env.VITE_API_URL;
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 export default function App() {
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState(() => {
-    const savedCart = localStorage.getItem("cart");
-    return savedCart ? JSON.parse(savedCart) : [];
+    const saved = localStorage.getItem("cart");
+    return saved ? JSON.parse(saved) : [];
   });
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [orders, setOrders] = useState([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
+
   const [checkout, setCheckout] = useState({
     customerName: "",
     email: "",
     address: ""
   });
 
-  const loadOrders = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/orders`);
-      const data = await res.json();
-      setOrders(data);
-    } catch (err) {
-      console.error("Failed to load orders", err);
-    }
-  };
-
-  useEffect(() => {
-    fetch(`${API_URL}/api/products`)
-      .then((res) => res.json())
-      .then((data) => setProducts(data))
-      .catch(() => setMessage("Could not load products"))
-      .finally(() => setLoading(false));
-
-    loadOrders();
-  }, []);
-
   useEffect(() => {
     localStorage.setItem("cart", JSON.stringify(cart));
   }, [cart]);
 
-  const categories = ["All", ...new Set(products.map((p) => p.category))];
+  useEffect(() => {
+    loadProducts();
+    loadOrders();
+  }, []);
 
-  const filteredProducts = products.filter((product) => {
-    const matchesSearch = product.title
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase());
+  async function loadProducts() {
+    try {
+      setLoadingProducts(true);
+      const res = await fetch(`${API_URL}/api/products`);
+      if (!res.ok) throw new Error("Failed to load products");
+      const data = await res.json();
+      setProducts(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to load products", err);
+      setMessage("Unable to load product catalog.");
+    } finally {
+      setLoadingProducts(false);
+    }
+  }
 
-    const matchesCategory =
-      selectedCategory === "All" || product.category === selectedCategory;
+  async function loadOrders() {
+    try {
+      setLoadingOrders(true);
+      const res = await fetch(`${API_URL}/api/orders`);
+      if (!res.ok) throw new Error("Failed to load orders");
+      const data = await res.json();
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to load orders", err);
+    } finally {
+      setLoadingOrders(false);
+    }
+  }
 
-    return matchesSearch && matchesCategory;
-  });
+  const categories = useMemo(() => {
+    const values = products.map((p) => p.category || "General");
+    return ["All", ...new Set(values)];
+  }, [products]);
 
-  const addToCart = (product) => {
+  const filteredProducts = useMemo(() => {
+    return products.filter((product) => {
+      const matchesSearch =
+        product.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.description?.toLowerCase().includes(searchTerm.toLowerCase());
+
+      const matchesCategory =
+        selectedCategory === "All" || product.category === selectedCategory;
+
+      return matchesSearch && matchesCategory;
+    });
+  }, [products, searchTerm, selectedCategory]);
+
+  function addToCart(product) {
     setCart((prev) => {
-      const found = prev.find((item) => item.id === product.id);
+      const existing = prev.find((item) => item.id === product.id);
 
-      if (found) {
+      if (existing) {
         return prev.map((item) =>
           item.id === product.id
             ? { ...item, quantity: item.quantity + 1 }
@@ -70,61 +92,105 @@ export default function App() {
         );
       }
 
-      return [...prev, { ...product, quantity: 1 }];
+      return [
+        ...prev,
+        {
+          id: product.id,
+          title: product.title,
+          price: Number(product.price) || 0,
+          image: product.image || "",
+          quantity: 1
+        }
+      ];
     });
-  };
 
-  const updateQty = (id, type) => {
+    setMessage(`${product.title} added to cart.`);
+    setTimeout(() => setMessage(""), 1800);
+  }
+
+  function changeQuantity(id, delta) {
     setCart((prev) =>
       prev
         .map((item) =>
           item.id === id
-            ? {
-                ...item,
-                quantity: type === "inc" ? item.quantity + 1 : item.quantity - 1
-              }
+            ? { ...item, quantity: item.quantity + delta }
             : item
         )
         .filter((item) => item.quantity > 0)
     );
-  };
+  }
 
-  const removeFromCart = (id) => {
+  function removeFromCart(id) {
     setCart((prev) => prev.filter((item) => item.id !== id));
-  };
+  }
 
-  const total = useMemo(
-    () => cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+  function clearCart() {
+    setCart([]);
+  }
+
+  const cartCount = useMemo(
+    () => cart.reduce((sum, item) => sum + item.quantity, 0),
     [cart]
   );
 
-  const handleCheckout = async (e) => {
-    e.preventDefault();
-    setMessage("");
+  const cartSubtotal = useMemo(() => {
+    return cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  }, [cart]);
 
-    if (!cart.length) {
+  function handleCheckoutChange(e) {
+    const { name, value } = e.target;
+    setCheckout((prev) => ({
+      ...prev,
+      [name]: value
+    }));
+  }
+
+  async function placeOrder(e) {
+    e.preventDefault();
+
+    if (!checkout.customerName.trim()) {
+      setMessage("Full name is required.");
+      return;
+    }
+
+    if (!checkout.email.trim()) {
+      setMessage("Email address is required.");
+      return;
+    }
+
+    if (!checkout.address.trim()) {
+      setMessage("Delivery address is required.");
+      return;
+    }
+
+    if (cart.length === 0) {
       setMessage("Your cart is empty.");
       return;
     }
 
-    const payload = {
-      ...checkout,
-      items: cart.map((item) => ({
-        productId: String(item.id),
-        title: item.title,
-        price: item.price,
-        image: item.image,
-        quantity: item.quantity
-      })),
-      total
-    };
-
     try {
       setSubmitting(true);
+      setMessage("");
+
+      const payload = {
+        customerName: checkout.customerName,
+        email: checkout.email,
+        address: checkout.address,
+        items: cart.map((item) => ({
+          productId: String(item.id),
+          title: item.title,
+          price: item.price,
+          image: item.image,
+          quantity: item.quantity
+        })),
+        total: cartSubtotal
+      };
 
       const res = await fetch(`${API_URL}/api/orders`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify(payload)
       });
 
@@ -134,9 +200,8 @@ export default function App() {
         throw new Error(data.message || "Checkout failed");
       }
 
-      setMessage(`Order placed successfully. Order ID: ${data.orderId}`);
+      setMessage("Order placed successfully.");
       setCart([]);
-      localStorage.removeItem("cart");
       setCheckout({
         customerName: "",
         email: "",
@@ -144,167 +209,262 @@ export default function App() {
       });
       loadOrders();
     } catch (err) {
-      setMessage(err.message);
+      console.error("Failed to place order", err);
+      setMessage(err.message || "Unable to complete checkout.");
     } finally {
       setSubmitting(false);
     }
-  };
+  }
 
   return (
-    <div className="page">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">MERN + Azure</p>
-          <h1>NovaShop</h1>
-          <p className="hero-text">
-            A clean starter e-commerce store built with React, Express, Node,
-            MongoDB, and Azure deployment in mind.
+    <div className="store-app">
+      <header className="store-hero">
+        <div className="hero-copy">
+          <span className="hero-badge">Featured Storefront</span>
+          <h1>Shop the latest deals with confidence</h1>
+          <p>
+           Save up to 50% on Latest Austin's Fave
           </p>
+
+          <div className="hero-metrics">
+            <div className="metric-card">
+              <span className="metric-value">{products.length}</span>
+              <span className="metric-label">Products</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-value">{cartCount}</span>
+              <span className="metric-label">Cart Items</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-value">{orders.length}</span>
+              <span className="metric-label">Orders</span>
+            </div>
+          </div>
         </div>
-        <div className="hero-card">
-          <h3>Cart Summary</h3>
-          <p>{cart.reduce((sum, item) => sum + item.quantity, 0)} items</p>
-          <p className="price">${total.toFixed(2)}</p>
+
+        <div className="hero-panel">
+          <div className="hero-panel-card">
+            <p className="mini-label">Today’s Summary</p>
+            <h3>It's Easter "He has RISEN!</h3>
+            <p className="mini-copy">
+              Search by keyword, filter by category, and manage orders
+              in one place.
+            </p>
+          </div>
         </div>
       </header>
 
-      <main className="layout">
-        <section>
-          <h2>Featured Products</h2>
+      {message && <div className="toast-message">{message}</div>}
 
-          <input
-            type="text"
-            placeholder="Search products..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      <main className="store-layout">
+        <section className="catalog-section card-shell">
+          <div className="section-top">
+            <div>
+              <p className="section-kicker">Product Catalog</p>
+              <h2>Browse Inventory</h2>
+            </div>
+            <span className="section-count">
+              {filteredProducts.length} available
+            </span>
+          </div>
 
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-          >
-            {categories.map((category) => (
-              <option key={category} value={category}>
-                {category}
-              </option>
-            ))}
-          </select>
+          <div className="catalog-toolbar">
+            <input
+              type="text"
+              placeholder="Search products or descriptions"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="field"
+            />
 
-          {loading ? (
-            <p>Loading products...</p>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="field"
+            >
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {loadingProducts ? (
+            <p className="empty-state">Loading product catalog...</p>
           ) : (
-            <div className="grid">
+            <div className="catalog-grid">
               {filteredProducts.map((product) => (
-                <div className="card" key={product.id}>
-                  <img src={product.image} alt={product.title} />
-                  <div className="card-body">
-                    <p className="category">{product.category}</p>
+                <article key={product.id} className="product-card">
+                  <div className="product-image-wrap">
+                    <img
+                      src={product.image}
+                      alt={product.title}
+                      className="product-image"
+                    />
+                  </div>
+
+                  <div className="product-body">
+                    <span className="product-chip">{product.category}</span>
                     <h3>{product.title}</h3>
-                    <p className="desc">
-                      {product.description?.slice(0, 90)}...
+                    <p className="product-description">
+                      {product.description}
                     </p>
-                    <div className="card-footer">
-                      <span>${product.price}</span>
-                      <button onClick={() => addToCart(product)}>
+
+                    <div className="product-bottom">
+                      <div>
+                        <p className="price-label">Unit Price</p>
+                        <strong className="product-price">
+                          ${Number(product.price).toFixed(2)}
+                        </strong>
+                      </div>
+
+                      <button
+                        className="primary-btn"
+                        onClick={() => addToCart(product)}
+                      >
                         Add to Cart
                       </button>
                     </div>
                   </div>
-                </div>
+                </article>
               ))}
             </div>
           )}
         </section>
 
-        <aside className="sidebar">
-          <div className="panel">
-            <h2>Your Cart</h2>
+        <aside className="store-sidebar">
+          <section className="card-shell">
+            <div className="section-top">
+              <div>
+                <p className="section-kicker">Shopping Cart</p>
+                <h2>Your Basket</h2>
+              </div>
+              <span className="section-count">{cartCount} item(s)</span>
+            </div>
+
             {cart.length === 0 ? (
-              <p>No items yet.</p>
+              <p className="empty-state">Your cart is empty.</p>
             ) : (
-              cart.map((item) => (
-                <div className="cart-item" key={item.id}>
-                  <img src={item.image} alt={item.title} />
-                  <div>
-                    <h4>{item.title}</h4>
-                    <p>${item.price}</p>
-                    <div className="qty">
-                      <button onClick={() => updateQty(item.id, "dec")}>-</button>
-                      <span>{item.quantity}</span>
-                      <button onClick={() => updateQty(item.id, "inc")}>+</button>
+              <>
+                <div className="cart-list">
+                  {cart.map((item) => (
+                    <div key={item.id} className="cart-row">
+                      <div className="cart-info">
+                        <h4>{item.title}</h4>
+                        <p>${item.price.toFixed(2)} each</p>
+                      </div>
+
+                      <div className="cart-controls">
+                        <button onClick={() => changeQuantity(item.id, -1)}>
+                          −
+                        </button>
+                        <span>{item.quantity}</span>
+                        <button onClick={() => changeQuantity(item.id, 1)}>
+                          +
+                        </button>
+                      </div>
+
+                      <button
+                        className="remove-btn"
+                        onClick={() => removeFromCart(item.id)}
+                      >
+                        Remove
+                      </button>
                     </div>
-                    <button
-                      className="remove-btn"
-                      onClick={() => removeFromCart(item.id)}
-                    >
-                      Remove
-                    </button>
+                  ))}
+                </div>
+
+                <div className="summary-box">
+                  <div className="summary-line">
+                    <span>Subtotal</span>
+                    <strong>${cartSubtotal.toFixed(2)}</strong>
                   </div>
                 </div>
-              ))
-            )}
-            <hr />
-            <p className="total">Total: ${total.toFixed(2)}</p>
-          </div>
 
-          <form className="panel" onSubmit={handleCheckout}>
-            <h2>Checkout</h2>
-            <input
-              type="text"
-              placeholder="Full name"
-              value={checkout.customerName}
-              onChange={(e) =>
-                setCheckout({ ...checkout, customerName: e.target.value })
-              }
-              required
-            />
-            <input
-              type="email"
-              placeholder="Email"
-              value={checkout.email}
-              onChange={(e) =>
-                setCheckout({ ...checkout, email: e.target.value })
-              }
-              required
-            />
-            <textarea
-              placeholder="Delivery address"
-              value={checkout.address}
-              onChange={(e) =>
-                setCheckout({ ...checkout, address: e.target.value })
-              }
-              required
-            />
-            <button type="submit" className="checkout-btn" disabled={submitting}>
-              {submitting ? "Placing Order..." : "Place Order"}
-            </button>
-            {message && <p className="message">{message}</p>}
-          </form>
+                <button className="secondary-btn full-btn" onClick={clearCart}>
+                  Clear Cart
+                </button>
+              </>
+            )}
+          </section>
+
+          <section className="card-shell">
+            <div className="section-top">
+              <div>
+                <p className="section-kicker">Secure Checkout</p>
+                <h2>Customer Details</h2>
+              </div>
+            </div>
+
+            <form onSubmit={placeOrder} className="checkout-form">
+              <input
+                className="field"
+                type="text"
+                name="customerName"
+                placeholder="Full name"
+                value={checkout.customerName}
+                onChange={handleCheckoutChange}
+              />
+
+              <input
+                className="field"
+                type="email"
+                name="email"
+                placeholder="Email address"
+                value={checkout.email}
+                onChange={handleCheckoutChange}
+              />
+
+              <textarea
+                className="field"
+                name="address"
+                placeholder="Delivery address"
+                rows="4"
+                value={checkout.address}
+                onChange={handleCheckoutChange}
+              />
+
+              <button className="primary-btn full-btn" disabled={submitting}>
+                {submitting ? "Processing Order..." : "Place Order"}
+              </button>
+            </form>
+          </section>
+
+          <section className="card-shell">
+            <div className="section-top">
+              <div>
+                <p className="section-kicker">Order History</p>
+                <h2>Recent Orders</h2>
+              </div>
+            </div>
+
+            {loadingOrders ? (
+              <p className="empty-state">Loading order history...</p>
+            ) : orders.length === 0 ? (
+              <p className="empty-state">No orders yet.</p>
+            ) : (
+              <div className="orders-stack">
+                {orders.map((order) => (
+                  <div key={order._id} className="order-card">
+                    <div className="order-head">
+                      <h4>{order.customerName}</h4>
+                      <span className="order-total">
+                        ${Number(order.total).toFixed(2)}
+                      </span>
+                    </div>
+                    <p>{order.email}</p>
+                    <p>{order.address}</p>
+                    <p className="order-meta">
+                      {order.items?.length || 0} item(s) in this order
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </aside>
       </main>
-
-      <section className="panel recent-orders">
-        <h2>Recent Orders</h2>
-        {orders.length === 0 ? (
-          <p>No orders yet.</p>
-        ) : (
-          orders.map((order) => (
-            <div key={order._id} className="order-card">
-              <h4>{order.customerName}</h4>
-              <p>{order.email}</p>
-              <p>{order.address}</p>
-              <p>
-                <strong>Date:</strong>{" "}
-                {new Date(order.createdAt).toLocaleString()}
-              </p>
-              <p>
-                <strong>Total:</strong> ${order.total}
-              </p>
-              <hr />
-            </div>
-          ))
-        )}
-      </section>
     </div>
   );
 }
