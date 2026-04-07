@@ -15,11 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js version
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
+      # FRONTEND (React)
       - name: Install client dependencies
         working-directory: ./client
         run: npm install
@@ -28,11 +29,12 @@ jobs:
         working-directory: ./client
         run: npm run build
 
+      # BACKEND (Node)
       - name: Install server dependencies
         working-directory: ./server
         run: npm install
 
-      - name: Upload artifact for deployment job
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: node-app
@@ -46,7 +48,7 @@ jobs:
       contents: read
 
     steps:
-      - name: Download artifact from build job
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: node-app
@@ -59,7 +61,6 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_7EE414D329B74EEFB464842A8030825E }}
 
       - name: Deploy to Azure Web App
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'Mern-e-commerce-website'
