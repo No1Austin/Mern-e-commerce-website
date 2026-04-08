@@ -8,27 +8,44 @@ dotenv.config();
 
 const app = express();
 
-/**
- * Allow requests from your frontend.
- * Put your Vercel URL in CLIENT_URL in Azure environment variables.
- * Example:
- * CLIENT_URL=https://your-app.vercel.app
- */
+/* CORS */
 app.use(
   cors({
     origin: process.env.CLIENT_URL || "*",
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type"]
+    allowedHeaders: ["Content-Type"],
   })
 );
 
 app.use(express.json());
 
-/* MongoDB */
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch((err) => console.error("MongoDB connection error:", err.message));
+/* MongoDB - avoid opening multiple connections in serverless */
+let isConnected = false;
+
+async function connectDB() {
+  if (isConnected) return;
+
+  try {
+    const conn = await mongoose.connect(process.env.MONGO_URI, {
+      bufferCommands: false,
+    });
+    isConnected = conn.connections[0].readyState === 1;
+    console.log("MongoDB connected");
+  } catch (err) {
+    console.error("MongoDB connection error:", err.message);
+    throw err;
+  }
+}
+
+/* Ensure DB connection before routes that need it */
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    res.status(500).json({ message: "Database connection failed" });
+  }
+});
 
 /* Health check */
 app.get("/api/health", (req, res) => {
@@ -42,7 +59,7 @@ app.get("/api/products", async (req, res) => {
 
     if (!response.ok) {
       return res.status(502).json({
-        message: "Failed to fetch external product catalog"
+        message: "Failed to fetch external product catalog",
       });
     }
 
@@ -53,8 +70,11 @@ app.get("/api/products", async (req, res) => {
       title: item.title,
       price: item.price,
       description: item.description,
-      image: Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : "",
-      category: item.category?.name || "General"
+      image:
+        Array.isArray(item.images) && item.images.length > 0
+          ? item.images[0]
+          : "",
+      category: item.category?.name || "General",
     }));
 
     res.json(cleaned);
@@ -94,12 +114,12 @@ app.post("/api/orders", async (req, res) => {
       email,
       address,
       items,
-      total
+      total,
     });
 
     res.status(201).json({
       message: "Order placed successfully",
-      orderId: order._id
+      orderId: order._id,
     });
   } catch (error) {
     console.error("Order save error:", error.message);
@@ -131,10 +151,10 @@ app.get("/api/test-write", async (req, res) => {
           title: "Test Product",
           price: 100,
           image: "",
-          quantity: 1
-        }
+          quantity: 1,
+        },
       ],
-      total: 100
+      total: 100,
     });
 
     res.json({ message: "Test order saved", testOrder });
@@ -149,7 +169,12 @@ app.use("/api", (req, res) => {
   res.status(404).json({ message: "API route not found" });
 });
 
-const port = process.env.PORT || 5000;
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+/* Only listen locally, not on Vercel */
+if (process.env.NODE_ENV !== "production") {
+  const port = process.env.PORT || 5000;
+  app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+  });
+}
+
+module.exports = app;
